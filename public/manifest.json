@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "ANSYS",
+  "short_name": "ANSYS",
+  "version": "0.0.1",
+  "description": "BCA",
+  "icons": {
+    "16": "/icons/icon16.png",
+    "32": "/icons/icon32.png",
+    "48": "/icons/icon48.png",
+    "192": "/icons/icon192.png"
+  },
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["index.html"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.mexc.com/*/futures/*"],
+      "js": ["content.js"],
+      "runAt": "document_idle"
+    }
+  ],
+  "background" : {},
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "index.html"
+  }
+}
