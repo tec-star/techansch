@@ -369,6 +369,7 @@ const aggregated = (data: Array<{ time: string, open: number, high: number, low:
   const ema2 = ema(closes, 20)
   const ema3 = ema(closes, 45)
   const ema4 = ema(closes, 120)
+  const ema5 = ema(closes, 450)
   const { trend: supertrend1, direction } = supertrend(highs, lows, closes, 3, 11)
   const rsi1 = rsi(closes, 48)
   const { macd: macdLine1, signal: signalLine1, histogram: histLine1 } = macd(closes, 9, 21, 6)
@@ -377,14 +378,15 @@ const aggregated = (data: Array<{ time: string, open: number, high: number, low:
   const obv1 = obv(closes, volumes)
   const obvEma1 = ema(obv1, 8)
   const { upper: bbUpper1, lower: bbLower1, basis: bbBasis1 } = bb(closes, 16, 2.3)
+  const atr1 = atr(highs, lows, closes, 560)
 
   const result: number[] = []
   for (let i = 100; i < data.length; i++) {
     // const bullTrend = ema1[i] > ema2[i] * 1.006 && ema2[i] > ema3[i] * 1.000 && ema3[i] > ema4[i] * 0.996 
     // const bearTrend = ema1[i] < ema2[i] * 0.994 && ema2[i] < ema3[i] * 1.000 && ema3[i] < ema4[i] * 1.004
 
-    const bullTrend = ema1[i] > ema2[i] * 1.003 && ema2[i] > ema3[i] * 1.003 && ema3[i] > ema4[i] * 1.003 
-    const bearTrend = ema1[i] < ema2[i] * 0.998 && ema2[i] < ema3[i] * 0.998 && ema3[i] < ema4[i] * 0.998
+    const bullTrend = ema1[i] > ema2[i] * 1.004 && ema2[i] > ema3[i] * 1.004 && ema3[i] > ema4[i] * 1.004
+    const bearTrend = ema1[i] < ema2[i] * 0.997 && ema2[i] < ema3[i] * 0.997 && ema3[i] < ema4[i] * 0.997
 
     const rsiBullish = rsi1[i] > 50 && rsi1[i] < 70 && rsi1[i] > rsi1[i - 1] && rsi1[i - 1] > rsi1[i - 2]
     const rsiBearish = rsi1[i] < 50 && rsi1[i] > 30 && rsi1[i] < rsi1[i - 1] && rsi1[i - 1] < rsi1[i - 2]
@@ -407,9 +409,9 @@ const aggregated = (data: Array<{ time: string, open: number, high: number, low:
       // closes[i] > vwma1[i] * 1.003 &&
       rsiBullish &&
       macdBullish &&
-      // (volumeSpike || obvRising) &&  // More flexible volume
+      (volumeSpike || obvRising) &&  // More flexible volume
       // (volumeSpike) &&  // More flexible volume
-      (squeeze || closes[i] > bbUpper1[i] * 0.998)  // Early breakout allowed
+      (squeeze || closes[i] > bbUpper1[i] * 0.998) // Early breakout allowed
 
     const short = 
       bearTrend &&
@@ -417,11 +419,13 @@ const aggregated = (data: Array<{ time: string, open: number, high: number, low:
       // closes[i] < vwma1[i] * 0.997 &&
       rsiBearish &&
       macdBearish &&
-      // (volumeSpike || obvFalling) &&
+      (volumeSpike || obvFalling) &&
       // (volumeSpike) &&
       (squeeze || closes[i] < bbLower1[i] * 1.002)
 
-    result[i] = long ? 1 : short ? -1 : 0
+    const atrCoeff = atr1[i] < 1.3 ? 1 : 0
+
+    result[i] = (long ? 1 : short ? -1 : 0) * atrCoeff
   }
 
   return result
@@ -497,16 +501,18 @@ const getOrderParams = ({
 }
 
 export const allInOne = async (symbol: string = 'XMR_USDT', interval: string = 'Min5', delay: number = 10) => {
-  const data = await getKlines(symbol, interval, '2020-01-01', delay)
+  console.log('started: ', new Date())
+  const data = await getKlines(symbol, interval, 100000)
+  console.log('data loaeded: ', new Date())
 
   const agg = aggregated(data)
   const wts = wt(data)
-  const atrs = atr(data.map((item: any) => item.high), data.map((item: any) => item.low), data.map((item: any) => item.close), 210)
+  const atrs = atr(data.map((item: any) => item.high), data.map((item: any) => item.low), data.map((item: any) => item.close), 560)
 
   const 
     validGap = 10, 
-    limit = 3,
-    increment = 3,
+    limit = 2.5,
+    increment = 2,
     incrementCountMax = 1
 
   let 
@@ -520,7 +526,10 @@ export const allInOne = async (symbol: string = 'XMR_USDT', interval: string = '
     orders: any[] = [], 
     pnl = 0,
     amount = 1,
-    incrementCount = 0
+    incrementCount = 0,
+
+    openOrders: any[] = [],
+    closedOrders: any[] = []
 
   for (let i = 100; i < data.length; i++) {
     const item = data[i]
@@ -683,12 +692,16 @@ export const allInOne = async (symbol: string = 'XMR_USDT', interval: string = '
     total,
     count: orders.length,
     drawdown,
-    orders
+    orders,
+    price: data
   }
+
   console.log('result: ', 
     result.total, result.count, orders.filter((item: any) => item.pnl > 0).length / orders.filter((item: any) => item.pnl < 0).length,  
     result.drawdown, 
-    orders.slice(-10).map((item: any) => ({ ...item, enterTime: moment.unix(item.enterTime).toISOString(), exitTime: moment.unix(item.exitTime).toISOString() })))
+    orders.slice(-10).map((item: any) => ({ ...item, enterTime: moment.unix(item.enterTime).toISOString(), exitTime: moment.unix(item.exitTime).toISOString() })),
+    new Date()
+  )
 
   return result
 }

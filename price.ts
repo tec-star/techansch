@@ -1,11 +1,9 @@
-const baseUrl = 'https://contract.mexc.com'
-const accessKey = 'mx0vgl6xi8QVejrxzP'
-const secretKey = '60ba1797c0684fbbb88e9b6523d045c0'
+import axios from 'axios'
+import moment from 'moment'
+import { promises as fs } from 'fs'
+
 
 const saveKlines = async (coin: string = 'XMR_USDT', interval: string = 'Min5', start: string = '2020-01-01', delay: number = 1) => {
-    const axios = require('axios')
-    const moment = require('moment')
-    const fs = require('fs').promises
     
     let data: any = []
 
@@ -87,4 +85,5 @@ const saveKlines = async (coin: string = 'XMR_USDT', interval: string = 'Min5', 
 }
 
 saveKlines('XMR_USDT', 'Min5')
+// setInterval(() => saveKlines(), 24 * 3600 * 1000)
 // saveKlines('BTC_USDT', 'Min5')
