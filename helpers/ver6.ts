@@ -1,4 +1,5 @@
 import moment from 'moment'
+import { getKlines } from './price';
 
 export function sleep(min: number, tolerance = 0) {
   return new Promise(resolve => setTimeout(resolve, min + Math.random() * tolerance));
@@ -348,8 +349,93 @@ export function obv(close: number[], volume: number[]): number[] {
 }
 
 
+// default options
+export const DEFAULT_AGG_OPTIONS = {
+  emaLen1: 7,
+  emaLen2: 20,
+  emaLen3: 45,
+  emaLen4: 120,
+  emaLen5: 450,
+  rsiLen: 48,
+  macdFastLen: 9,
+  macdSlowLen: 21,
+  macdSiglLen: 6,
+  volAvgLen: 18,
+  obvEmaLen: 8,
+  bbLen: 16,
+  bbMul: 2.3,
+  atrLen: 560,
+  emaUpCoeff: 1.004,
+  emaDownCoeff: 0.997,
+  rsiUpLimit: 70,
+  rsiDownLimit: 30,
+  rsiStartLimit: 50,
+  macdUpCoeff: 1.08,
+  macdDownCoeff: 0.92,
+  volAvgCoeff: 2.3,
+  bbWidthLimit: 0.042,
+  bbUpLimit: 0.998,
+  bbDownLimit: 1.002,
+  atrLimit: 1.3
+}
+
+export const DEFAULT_WT_OPTIONS = {
+  n1: 10,
+  n2: 21,
+  obLevel: 50,
+  osLevel: -50,
+  ciCoeff: 0.015,
+  wt2Coeff: 3
+}
+
+export const DEFAULT_ALL_IN_ONE_OPTIONS = {
+  validGap: 10,
+  limit: 2.5,
+  increment: 2,
+  incrementCountMax: 1
+}
+
+// all options in one flat object, allInOne passes it to aggregated and wt
+export const DEFAULT_OPTIONS = {
+  ...DEFAULT_AGG_OPTIONS,
+  ...DEFAULT_WT_OPTIONS,
+  ...DEFAULT_ALL_IN_ONE_OPTIONS
+}
+
 // functions
-const aggregated = (data: Array<{ time: string, open: number, high: number, low: number, close: number, volume: number }>) => {
+const aggregated = (
+  data: Array<{ time: string, open: number, high: number, low: number, close: number, volume: number }>,
+  options: any = {}
+) => {
+  const {
+    emaLen1,
+    emaLen2,
+    emaLen3,
+    emaLen4,
+    emaLen5,
+    rsiLen,
+    macdFastLen,
+    macdSlowLen,
+    macdSiglLen,
+    volAvgLen,
+    obvEmaLen,
+    bbLen,
+    bbMul,
+    atrLen,
+    emaUpCoeff,
+    emaDownCoeff,
+    rsiUpLimit,
+    rsiDownLimit,
+    rsiStartLimit,
+    macdUpCoeff,
+    macdDownCoeff,
+    volAvgCoeff,
+    bbWidthLimit,
+    bbUpLimit,
+    bbDownLimit,
+    atrLimit
+  } = { ...DEFAULT_AGG_OPTIONS, ...options }
+
   const opens: number[] = [], lows: number[] = [], highs: number[] = [], closes: number[] = [], volumes: number[] = [];
   for (const item of data) {
     opens.push(item.open)
@@ -359,43 +445,43 @@ const aggregated = (data: Array<{ time: string, open: number, high: number, low:
     volumes.push(item.volume)
   }
 
-  const ema1 = ema(closes, 7)
-  const ema2 = ema(closes, 20)
-  const ema3 = ema(closes, 45)
-  const ema4 = ema(closes, 120)
-  const ema5 = ema(closes, 450)
+  const ema1 = ema(closes, emaLen1)
+  const ema2 = ema(closes, emaLen2)
+  const ema3 = ema(closes, emaLen3)
+  const ema4 = ema(closes, emaLen4)
+  const ema5 = ema(closes, emaLen5)
   // const { trend: supertrend1, direction } = supertrend(highs, lows, closes, 3, 11)
-  const rsi1 = rsi(closes, 48)
-  const { macd: macdLine1, signal: signalLine1, histogram: histLine1 } = macd(closes, 9, 21, 6)
+  const rsi1 = rsi(closes, rsiLen)
+  const { macd: macdLine1, signal: signalLine1, histogram: histLine1 } = macd(closes, macdFastLen, macdSlowLen, macdSiglLen)
   // const vwma1 = vwma(closes, volumes, 16)
-  const volumeAvg1 = sma(volumes, 18)
+  const volumeAvg1 = sma(volumes, volAvgLen)
   const obv1 = obv(closes, volumes)
-  const obvEma1 = ema(obv1, 8)
-  const { upper: bbUpper1, lower: bbLower1, basis: bbBasis1 } = bb(closes, 16, 2.3)
-  const atr1 = atr(highs, lows, closes, 560)
+  const obvEma1 = ema(obv1, obvEmaLen)
+  const { upper: bbUpper1, lower: bbLower1, basis: bbBasis1 } = bb(closes, bbLen, bbMul)
+  const atr1 = atr(highs, lows, closes, atrLen)
 
   const result: number[] = []
   for (let i = 100; i < data.length; i++) {
     // const bullTrend = ema1[i] > ema2[i] * 1.006 && ema2[i] > ema3[i] * 1.000 && ema3[i] > ema4[i] * 0.996 
     // const bearTrend = ema1[i] < ema2[i] * 0.994 && ema2[i] < ema3[i] * 1.000 && ema3[i] < ema4[i] * 1.004
 
-    const bullTrend = ema1[i] > ema2[i] * 1.004 && ema2[i] > ema3[i] * 1.004 && ema3[i] > ema4[i] * 1.004
-    const bearTrend = ema1[i] < ema2[i] * 0.997 && ema2[i] < ema3[i] * 0.997 && ema3[i] < ema4[i] * 0.997
+    const bullTrend = ema1[i] > ema2[i] * emaUpCoeff && ema2[i] > ema3[i] * emaUpCoeff && ema3[i] > ema4[i] * emaUpCoeff
+    const bearTrend = ema1[i] < ema2[i] * emaDownCoeff && ema2[i] < ema3[i] * emaDownCoeff && ema3[i] < ema4[i] * emaDownCoeff
 
-    const rsiBullish = rsi1[i] > 50 && rsi1[i] < 70 && rsi1[i] > rsi1[i - 1] && rsi1[i - 1] > rsi1[i - 2]
-    const rsiBearish = rsi1[i] < 50 && rsi1[i] > 30 && rsi1[i] < rsi1[i - 1] && rsi1[i - 1] < rsi1[i - 2]
+    const rsiBullish = rsi1[i] > rsiStartLimit && rsi1[i] < rsiUpLimit && rsi1[i] > rsi1[i - 1] && rsi1[i - 1] > rsi1[i - 2]
+    const rsiBearish = rsi1[i] < rsiStartLimit && rsi1[i] > rsiDownLimit && rsi1[i] < rsi1[i - 1] && rsi1[i - 1] < rsi1[i - 2]
 
-    const macdBullish = histLine1[i] > 0 && histLine1[i] > histLine1[i - 1] * 1.08
-    const macdBearish = histLine1[i] < 0 && histLine1[i] < histLine1[i - 1] * 0.92
+    const macdBullish = histLine1[i] > 0 && histLine1[i] > histLine1[i - 1] * macdUpCoeff
+    const macdBearish = histLine1[i] < 0 && histLine1[i] < histLine1[i - 1] * macdDownCoeff
 
-    const volumeSpike = volumes[i] > volumeAvg1[i] * 2.3
+    const volumeSpike = volumes[i] > volumeAvg1[i] * volAvgCoeff
 
     const obvRising = obv1[i] > obvEma1[i] && obv1[i] > obv1[i - 1] && obv1[i - 1] > obv1[i - 2]
     const obvFalling = obv1[i] < obvEma1[i] && obv1[i] < obv1[i - 1] && obv1[i - 1] < obv1[i - 2]
 
     const insideBB = closes[i] < bbUpper1[i] && closes[i] > bbLower1[i]
     const bbWidth = (bbUpper1[i] - bbLower1[i]) / bbBasis1[i]
-    const squeeze = bbWidth < 0.042 && insideBB
+    const squeeze = bbWidth < bbWidthLimit && insideBB
 
     const long = 
       bullTrend &&
@@ -405,7 +491,7 @@ const aggregated = (data: Array<{ time: string, open: number, high: number, low:
       macdBullish &&
       (volumeSpike || obvRising) &&  // More flexible volume
       // (volumeSpike) &&  // More flexible volume
-      (squeeze || closes[i] > bbUpper1[i] * 0.998) // Early breakout allowed
+      (squeeze || closes[i] > bbUpper1[i] * bbUpLimit) // Early breakout allowed
 
     const short = 
       bearTrend &&
@@ -415,16 +501,28 @@ const aggregated = (data: Array<{ time: string, open: number, high: number, low:
       macdBearish &&
       (volumeSpike || obvFalling) &&
       // (volumeSpike) &&
-      (squeeze || closes[i] < bbLower1[i] * 1.002)
+      (squeeze || closes[i] < bbLower1[i] * bbDownLimit)
 
-    const atrCoeff = atr1[i] < 1.3 ? 1 : 0
+    const atrCoeff = atr1[i] < atrLimit ? 1 : 0
 
     result[i] = (long ? 1 : short ? -1 : 0) * atrCoeff
   }
 
   return result
 }
-const wt = (data: Array<{ time: string, open: number, high: number, low: number, close: number, volume: number }>) => {
+const wt = (
+  data: Array<{ time: string, open: number, high: number, low: number, close: number, volume: number }>,
+  options: any = {}
+) => {
+  const {
+    n1,
+    n2,
+    obLevel,
+    osLevel,
+    ciCoeff,
+    wt2Coeff
+  } = { ...DEFAULT_WT_OPTIONS, ...options }
+
   const opens: number[] = [], lows: number[] = [], highs: number[] = [], closes: number[] = [], volumes: number[] = [], hlc3s: number[] = [];
   for (const item of data) {
     opens.push(item.open)
@@ -435,24 +533,23 @@ const wt = (data: Array<{ time: string, open: number, high: number, low: number,
     hlc3s.push((item.high + item.low + item.close) / 3)
   }
 
-  const n1 = 10, n2 = 21, obLevel1 = 50, osLevel1 = -50
   const ap = hlc3s
   const esa = ema(hlc3s, n1)
   const d = ema(hlc3s.map((item: number, index: number) => Math.abs(item - esa[index])), n1)
-  const ci = hlc3s.map((item: number, index: number) => (item - esa[index]) / (0.015 * d[index]))
+  const ci = hlc3s.map((item: number, index: number) => (item - esa[index]) / (ciCoeff * d[index]))
   const tci = ema(ci, n2)
 
   const wt1 = tci
   // return wt1;
 
-  const wt2 = sma(wt1, 3)
+  const wt2 = sma(wt1, wt2Coeff)
   
   const result: Array<{enter: number, exit: number}> = []
   for (let i = 100; i < data.length; i++) {
     let enter = 0, exit = 0
-    if (wt1[i - 1] < wt2[i - 1] && wt1[i] > wt2[i] && wt2[i] < osLevel1)
+    if (wt1[i - 1] < wt2[i - 1] && wt1[i] > wt2[i] && wt2[i] < osLevel)
       enter = 1
-    else if (wt1[i - 1] > wt2[i - 1] && wt1[i] < wt2[i] && wt2[i] > obLevel1)
+    else if (wt1[i - 1] > wt2[i - 1] && wt1[i] < wt2[i] && wt2[i] > obLevel)
       enter = -1
 
     if (wt1[i] > wt2[i])
@@ -494,15 +591,19 @@ const getOrderParams = ({
   }
 }
 
-export const allInOne = async (data: any[], interval: string = 'Min5', delay: number = 10) => {
-  const agg = aggregated(data)
-  const wts = wt(data)
+export const allInOne = async (
+  data: any[],
+  options: any = {}
+) => {
+  const {
+    validGap,
+    limit,
+    increment,
+    incrementCountMax
+  } = { ...DEFAULT_ALL_IN_ONE_OPTIONS, ...options }
 
-  const 
-    validGap = 10, 
-    limit = 2.5,
-    increment = 2,
-    incrementCountMax = 1
+  const agg = aggregated(data, options)
+  const wts = wt(data, options)
 
   let 
     max = 0, 
@@ -678,17 +779,30 @@ export const allInOne = async (data: any[], interval: string = 'Min5', delay: nu
     }
   }
   const result = {
-    total,
+    total: total - orders.length * 0.08,
     count: orders.length,
     drawdown,
     orders,
     price: data
   }
 
-  console.log('result: ', 
-    result.total, result.count, orders.filter((item: any) => item.pnl > 0).length / orders.filter((item: any) => item.pnl < 0).length,  
-    result.drawdown, 
-    orders.slice(-10).map((item: any) => ({ ...item, enterTime: moment.unix(item.enterTime).toISOString(), exitTime: moment.unix(item.exitTime).toISOString() })))
-
   return result
+}
+
+// options: any subset of DEFAULT_OPTIONS, missing keys fall back to the defaults
+export async function getOrders(options: any = {}, log = true) {
+  const MAX_LIMIT = 100000
+  const data = await getKlines('XMR_USDT', 'Min5', MAX_LIMIT)
+  const { total, count, drawdown, orders, price } = await allInOne(data, options)
+
+  if (log) {
+    console.log('result: ',
+      total, count, orders.filter((item: any) => item.pnl > 0).length / orders.filter((item: any) => item.pnl < 0).length,
+      drawdown,
+      orders.slice(-10).map((item: any) => ({ ...item, enterTime: moment.unix(item.enterTime).toISOString(), exitTime: moment.unix(item.exitTime).toISOString() })))
+  }
+
+  return {
+    total, drawdown, count
+  }
 }
