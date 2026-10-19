@@ -392,7 +392,7 @@ export const DEFAULT_ALL_IN_ONE_OPTIONS = {
   validGap: 10,
   limit: 2.5,
   increment: 2,
-  incrementCountMax: 1
+  incrementCountMax: 0
 }
 
 // all options in one flat object, allInOne passes it to aggregated and wt
@@ -618,21 +618,22 @@ export const allInOne = async (
     amount = 1,
     incrementCount = 0,
 
-    openOrders: any[] = [],
-    closedOrders: any[] = []
+    shouldClose = false,
+    shouldOpen = false
 
   for (let i = 100; i < data.length; i++) {
     const item = data[i]
     const aggItem = agg[i]
     const wt: any = wts[i]
 
+    shouldOpen = false
+    shouldClose = false
+
     if (aggItem && flag === -aggItem) {
       validcount = 0
     }
 
     if (open) {
-      let shouldClear = false
-
       if (open === 1) {
         if (item.low <= order.stop) {
           pnl = (order.stop - order.enterPrice) / order.enterPrice * 100 * order.amount
@@ -648,21 +649,24 @@ export const allInOne = async (
           }
 
           orders.push(order)
-
-          incrementCount++
-          order = getOrderParams({
-            type: order.type,
-            enterTime: item.time,
-            enterPrice: item.close,
-            amount: order.amount * increment,
-            percent: limit
-          })
-
+          
           if (incrementCount >= incrementCountMax) {
-            shouldClear = true
+            shouldClose = true
+          } else {
+            shouldClose = true
+            shouldOpen = true
+
+            incrementCount++
+            order = getOrderParams({
+              type: order.type,
+              enterTime: item.time,
+              enterPrice: item.close,
+              amount: order.amount * increment,
+              percent: limit
+            })
           }
         } else if (item.high >= order.limit) {
-          shouldClear = true
+          shouldClose = true
           pnl = (order.limit - order.enterPrice) / order.enterPrice * 100 * order.amount
           total += pnl
 
@@ -693,20 +697,23 @@ export const allInOne = async (
 
           orders.push(order)
 
-          incrementCount++
-          order = getOrderParams({
-            type: order.type,
-            enterTime: item.time,
-            enterPrice: item.close,
-            amount: order.amount * increment,
-            percent: limit
-          })
-           
           if (incrementCount >= incrementCountMax) {
-            shouldClear = true
+            shouldClose = true
+          } else {
+            shouldClose = true
+            shouldOpen = true
+            
+            incrementCount++
+            order = getOrderParams({
+              type: order.type,
+              enterTime: item.time,
+              enterPrice: item.close,
+              amount: order.amount * increment,
+              percent: limit
+            })
           }
         } else if (item.low <= order.limit) {
-          shouldClear = true
+          shouldClose = true
           pnl = (order.enterPrice - order.limit) / order.limit * 100 * order.amount
           total += pnl
 
@@ -723,12 +730,12 @@ export const allInOne = async (
         } 
       }
 
-      if (shouldClear) {
+      if (shouldClose && !shouldOpen) {
         pnl = 0
         flag = 0
         open = 0
         validcount = 0
-        order = {}
+        order = null
         amount = 1
         incrementCount = 0
 
@@ -736,13 +743,14 @@ export const allInOne = async (
         const gap = max - total
         drawdown = Math.max(drawdown, gap)
       }
-    } 
+    }
     
     if (flag) {
       if (!open) {
         if (validcount <= validGap) {
           if (flag === wt.enter) {
             open = flag
+            shouldOpen = true
   
             if (flag === 1) {
               order = getOrderParams({
@@ -752,6 +760,7 @@ export const allInOne = async (
                 amount,
                 percent: limit
               })
+
             } else {
               order = getOrderParams({
                 type: open,
@@ -779,11 +788,15 @@ export const allInOne = async (
     }
   }
   const result = {
-    total: total - orders.length * 0.08,
+    total: total - orders.length * 0.2,
     count: orders.length,
     drawdown,
     orders,
-    price: data
+    price: data,
+    lastOrder: orders.at(-1),
+    currentOrder: order,
+    shouldOpen,
+    shouldClose
   }
 
   return result
