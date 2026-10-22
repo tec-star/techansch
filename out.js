@@ -20,3 +20,8 @@ fs.rename(sourcePath, destinationPath, (err) => {
     console.log('Renamed "_next" directory to "next" successfully.');
   }
 });
+
+// the index page loads its candles from here (in dev it uses the /api/candles route instead)
+fs.mkdirSync('out/data', { recursive: true });
+fs.copyFileSync('data/XMR_USDT-Min5.json', 'out/data/XMR_USDT-Min5.json');
+console.log('Copied data/XMR_USDT-Min5.json to out/data.');

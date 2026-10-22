@@ -1,5 +1,4 @@
 import moment from 'moment'
-import { getKlines } from './price';
 
 export function sleep(min: number, tolerance = 0) {
   return new Promise(resolve => setTimeout(resolve, min + Math.random() * tolerance));
@@ -805,6 +804,8 @@ export const allInOne = async (
 // options: any subset of DEFAULT_OPTIONS, missing keys fall back to the defaults
 export async function getOrders(options: any = {}, log = true) {
   const MAX_LIMIT = 100000
+  // loaded here, not at the top: price.ts requires every data file, the index page imports ver6 and mustn't bundle them
+  const { getKlines } = await import(/* webpackIgnore: true */ './price')
   const data = await getKlines('XMR_USDT', 'Min5', MAX_LIMIT)
   const { total, count, drawdown, orders, price } = await allInOne(data, options)
 

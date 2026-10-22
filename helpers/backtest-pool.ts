@@ -6,8 +6,11 @@
 
 import os from 'os'
 import { fork, ChildProcess } from 'child_process'
-import { allInOne, getOrders } from './ver6'
+import { getOrders } from './ver6'
 import { getKlines } from './price'
+import { BacktestResult, backtestResult } from './optimize-ver6'
+
+export type { BacktestResult }
 
 export interface BacktestTask {
   params: Record<string, number>
@@ -15,26 +18,6 @@ export interface BacktestTask {
   slice?: { coin: string, interval: string, from: number, to: number }
   // also return the net total of each of `parts` equal stretches of the slice (by exit time)
   parts?: number
-}
-
-export interface BacktestResult {
-  total: number
-  drawdown: number
-  count: number
-  parts?: number[]
-}
-
-// net pnl per stretch, the fee is whatever allInOne takes off its total per order
-function partTotals(candles: any[], orders: any[], total: number, count: number, parts: number) {
-  const fee = count ? (orders.reduce((sum: number, order: any) => sum + order.pnl, 0) - total) / count : 0
-  const first = candles[0].time
-  const span = candles[candles.length - 1].time - first + 1
-  const result = new Array(parts).fill(0)
-
-  for (const order of orders)
-    result[Math.min(parts - 1, Math.floor((order.exitTime - first) / span * parts))] += order.pnl - fee
-
-  return result
 }
 
 export const DEFAULT_POOL_SIZE = Math.max(1, Math.min(12, os.cpus().length - 2))
@@ -54,13 +37,7 @@ export async function runBacktest({ params, slice, parts }: BacktestTask): Promi
     return { total, drawdown, count }
   }
 
-  const candles = (await loadCandles(slice.coin, slice.interval)).slice(slice.from, slice.to)
-  const { total, drawdown, count, orders } = await allInOne(candles, params)
-
-  if (!parts)
-    return { total, drawdown, count }
-
-  return { total, drawdown, count, parts: partTotals(candles, orders, total, count, parts) }
+  return backtestResult((await loadCandles(slice.coin, slice.interval)).slice(slice.from, slice.to), params, parts)
 }
 
 export function createPool(size = DEFAULT_POOL_SIZE) {

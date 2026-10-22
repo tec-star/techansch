@@ -113,7 +113,9 @@ function Chart({
          if (!data[i].data || data[i].data.length == 0) {
             emptyData.push(data[i].name)
          }
-         if (!data[i].stack || !stacks.includes(data[i].stack!)) {
+         // series with the same yAxis name share one axis
+         const sameAxis = !!data[i].yAxis && yAxis.some((item: any) => item.name === data[i].yAxis)
+         if (!sameAxis && (!data[i].stack || !stacks.includes(data[i].stack!))) {
             yAxis.push({
                name: data[i].yAxis || data[i].stack || data[i].name,
                inverse: data[i].inverse,

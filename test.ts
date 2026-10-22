@@ -2,13 +2,14 @@ import { getKlines } from "./helpers/price"
 import { sleep } from "./helpers/ver6"
 import { createLiveOptimizer } from "./helpers/live-ver6"
 import { execSync } from "node:child_process";
+import { renameSync, writeFileSync } from "node:fs";
 import axios from "axios";
 import crypto from "crypto";
 
 const MEXC_API_KEY = process.env.MEXC_API_KEY!;
 const MEXC_API_SECRET = process.env.MEXC_API_SECRET!;
 const BASE_URL = "https://contract.mexc.com";
-const MAX_LIMIT = 100000
+const DATA_FILE = './data/XMR_USDT-Min5.json'
 
 
 interface FuturesOrderParams {
@@ -107,11 +108,21 @@ const
     MARGIN_AMOUNT = 1000,
     CANDLE_SECONDS = 300
 
-// allInOne options re-optimized like the walk-forward CHOSEN setup: 50k candle window, drawdown break,
-// ±5% around DEFAULT_OPTIONS; the current options are kept in data/live-ver6-state.json
+// the live walk-forward the index page shows: from LIVE_START (walk-forward-core.ts), 50k candle window, drawdown
+// break, ±5% around DEFAULT_OPTIONS; it's kept in data/live-ver6-state.json
 const live = createLiveOptimizer()
 
 let data: any[] = [], prevCandle: any = null, order: any = null
+
+// keeps the data file up to date with the live candles, the index page reads it so both have the same candles
+const saveCandles = () => {
+    try {
+        writeFileSync(`${DATA_FILE}.tmp`, JSON.stringify(data))
+        renameSync(`${DATA_FILE}.tmp`, DATA_FILE)
+    } catch (error) {
+        console.error("saving candles error:", error);
+    }
+}
 async function test() {
     try {
         const output = execSync(`npx ts-node --esm price.ts`, {
@@ -123,12 +134,13 @@ async function test() {
         console.error("get recent price data error:", error);
     }
 
-    data = await getKlines('XMR_USDT', 'Min5', MAX_LIMIT)
+    // all candles: the live walk-forward needs the 50k candles before LIVE_START
+    data = await getKlines('XMR_USDT', 'Min5', Infinity)
 
     // price.ts also saves the candle that is still forming, it is added once it completes
     data = data.filter(candle => candle.time + CANDLE_SECONDS <= Date.now() / 1000)
 
-    // optimizes on the last 50k candles when there is no saved state, otherwise checks the saved options' break
+    // continues the saved walk-forward on the candles since (the first start replays it from LIVE_START)
     await live.update(data)
 
     let ws: any = null, currentOpen = 0, newCandle = false
@@ -180,6 +192,8 @@ async function test() {
                         data[data.length - 1] = prevCandle
                     else
                         data.push(prevCandle)
+
+                    saveCandles()
                 }
 
                 prevCandle = { time, open, high, low, close, volume }
@@ -187,7 +201,8 @@ async function test() {
                 if (newCandle) {
                     newCandle = false
 
-                    // allInOne with the current options; re-optimizes instead (no trade this candle) when the break hits
+                    // allInOne with the current options; null when this candle isn't traded (a drawdown break just
+                    // ended the segment, the next one starts on the next candle with new options)
                     const { result } = await live.update(data)
                     if (!result)
                         return

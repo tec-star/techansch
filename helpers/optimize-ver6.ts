@@ -1,16 +1,38 @@
-// Optimizes the aggregated, wt and allInOne options of ver6 for getOrders:
+// The search space and rules for optimizing ver6's aggregated, wt and allInOne options:
 // biggest total with drawdown < maxDrawdown and count > minCount.
-//
-// npm run optimize -- --evals 3000 --workers 12 --seed 1 --max-drawdown 20 --min-count 150
+// No node imports, so the browser (the index page) uses the same code as the node tools:
+// optimize-ver6-node.ts runs it on backtest processes and has the `npm run optimize` command.
 
-import { writeFileSync } from 'fs'
-import path from 'path'
-import { parseArgs } from 'util'
-import { DEFAULT_OPTIONS } from './ver6'
+import { allInOne, DEFAULT_OPTIONS } from './ver6'
 import { optimize, Candidate, ParamSpace, Params } from './optimizer'
-import { BacktestResult, BacktestTask, DEFAULT_POOL_SIZE, Pool, createPool, runBacktest } from './backtest-pool'
+
+export interface BacktestResult {
+  total: number
+  drawdown: number
+  count: number
+  parts?: number[]
+}
 
 type Result = BacktestResult
+
+// allInOne on `candles` reduced to what the optimizer needs; with `parts` also the net total of that many equal
+// stretches of the candles (by exit time), the fee is whatever allInOne takes off its total per order
+export async function backtestResult(candles: any[], params: Params, parts?: number): Promise<BacktestResult> {
+  const { total, drawdown, count, orders } = await allInOne(candles, params)
+
+  if (!parts)
+    return { total, drawdown, count }
+
+  const fee = count ? (orders.reduce((sum: number, order: any) => sum + order.pnl, 0) - total) / count : 0
+  const first = candles[0].time
+  const span = candles[candles.length - 1].time - first + 1
+  const totals = new Array(parts).fill(0)
+
+  for (const order of orders)
+    totals[Math.min(parts - 1, Math.floor((order.exitTime - first) / span * parts))] += order.pnl - fee
+
+  return { total, drawdown, count, parts: totals }
+}
 
 // left out, so they keep their DEFAULT_OPTIONS values:
 // - emaLen5: ver6 computes ema5 but no signal uses it
@@ -109,7 +131,7 @@ export interface RobustRule {
 }
 
 // what the optimizer checks: violation 0 = options pass, objective = value to maximize
-export function criteria({ maxDrawdown = 20, minCount = 150, robust }: { maxDrawdown?: number, minCount?: number, robust?: RobustRule } = {}) {
+export function criteria({ maxDrawdown = 15, minCount = 150, robust }: { maxDrawdown?: number, minCount?: number, robust?: RobustRule } = {}) {
   const violation = (r: Result) => {
     const parts = robust?.rule === 'every-part-profitable' ? r.parts ?? [] : []
 
@@ -125,153 +147,53 @@ export function criteria({ maxDrawdown = 20, minCount = 150, robust }: { maxDraw
   return { violation, objective }
 }
 
-export interface OptimizeVer6Options {
+export interface OptimizeOptionsArgs {
   // defaults to SPACE
   space?: ParamSpace
+  // starting point, missing keys come from DEFAULT_OPTIONS
+  start?: Params
   maxDrawdown?: number
   minCount?: number
   robust?: RobustRule
   maxEvaluations?: number
-  // backtest processes, 0 runs everything in this process; ignored when `pool` is given
-  workers?: number
-  // reuse an existing pool (the walk-forward runs many optimizations)
-  pool?: Pool
-  // optimize on these candles instead of the data getOrders uses
-  slice?: BacktestTask['slice']
-  // starting point, missing keys come from DEFAULT_OPTIONS
-  start?: Params
+  // params per evaluate call while exploring, changes the search path (the node tools use 24)
+  batchSize?: number
   seed?: number
-  // writes the best options found so far after every improvement
-  outFile?: string
-  log?: boolean
+  onImprove?: (best: Candidate<Result>, evaluations: number) => void
+  onRestart?: (restarts: number, evaluations: number) => void
 }
 
-export async function optimizeVer6({
+// optimizes ver6's options with any backtest runner: `evaluate` backtests a batch of params on the optimization
+// candles (backtest processes in node, the page itself in the browser)
+export async function optimizeOptions(evaluate: (batch: Params[]) => Promise<Result[]>, {
   space = SPACE,
-  maxDrawdown = 20,
-  minCount = 150,
-  maxEvaluations = 3000,
-  workers = DEFAULT_POOL_SIZE,
-  pool,
-  slice,
   start = {},
-  seed = 1,
-  outFile,
+  maxDrawdown = 15,
+  minCount = 150,
   robust,
-  log = true
-}: OptimizeVer6Options = {}) {
-  if (robust && !slice)
-    throw new Error('robust needs a slice')
-
+  maxEvaluations = 3000,
+  batchSize = 24,
+  seed = 1,
+  onImprove,
+  onRestart
+}: OptimizeOptionsArgs = {}) {
   const { violation, objective } = criteria({ maxDrawdown, minCount, robust })
 
-  const ownPool = !pool && workers > 0 ? createPool(workers) : undefined
-  const activePool = pool ?? ownPool
-
-  const evaluate = async (batch: Params[]) => {
-    const tasks = batch.map(params => ({ params, slice, parts: robust?.parts }))
-    if (activePool)
-      return activePool.evaluate(tasks)
-
-    const results: Result[] = []
-    for (const task of tasks)
-      results.push(await runBacktest(task))
-    return results
-  }
-
-  const startedAt = Date.now()
-  const elapsed = () => `${((Date.now() - startedAt) / 1000).toFixed(0)}s`
-
-  const save = (best: Candidate<Result>, evaluations: number) => {
-    if (!outFile)
-      return
-
-    writeFileSync(outFile, JSON.stringify({
-      options: { ...DEFAULT_OPTIONS, ...best.params },
-      result: best.result,
-      feasible: best.violation === 0,
-      constraints: { maxDrawdown, minCount, robust },
-      evaluations,
-      seed,
-      date: new Date().toISOString()
-    }, null, 2))
-  }
-
-  try {
-    const { best, evaluations, restarts } = await optimize<Result>({
-      space,
-      start: { ...DEFAULT_OPTIONS, ...start },
-      evaluate,
-      objective,
-      violation,
-      isValid,
-      maxEvaluations,
-      batchSize: Math.max(8, (activePool?.size ?? 1) * 2),
-      seed,
-      onImprove: (best, evaluations) => {
-        const { total, count, drawdown } = best.result
-        if (log)
-          console.log(`[${evaluations} evals, ${elapsed()}] total=${total.toFixed(2)} count=${count} drawdown=${drawdown.toFixed(2)} ${best.violation === 0 ? 'feasible' : `violation=${best.violation.toFixed(3)}`}`)
-        save(best, evaluations)
-      },
-      onRestart: (restarts, evaluations) => {
-        if (log)
-          console.log(`[${evaluations} evals, ${elapsed()}] local optimum, restart #${restarts}`)
-      }
-    })
-
-    save(best, evaluations)
-
-    const options: Params = { ...DEFAULT_OPTIONS, ...best.params }
-
-    return {
-      options,
-      result: best.result,
-      feasible: best.violation === 0,
-      evaluations,
-      restarts,
-      outFile
-    }
-  } finally {
-    ownPool?.close()
-  }
-}
-
-if (require.main === module) {
-  const { values } = parseArgs({
-    options: {
-      evals: { type: 'string' },
-      workers: { type: 'string' },
-      seed: { type: 'string' },
-      'max-drawdown': { type: 'string' },
-      'min-count': { type: 'string' },
-      out: { type: 'string' }
-    }
+  const { best, evaluations, restarts } = await optimize<Result>({
+    space,
+    start: { ...DEFAULT_OPTIONS, ...start },
+    evaluate,
+    objective,
+    violation,
+    isValid,
+    maxEvaluations,
+    batchSize,
+    seed,
+    onImprove,
+    onRestart
   })
 
-  const number = (value: string | undefined) => (value === undefined ? undefined : Number(value))
+  const options: Params = { ...DEFAULT_OPTIONS, ...best.params }
 
-  optimizeVer6({
-    maxEvaluations: number(values.evals),
-    workers: number(values.workers),
-    seed: number(values.seed),
-    maxDrawdown: number(values['max-drawdown']),
-    minCount: number(values['min-count']),
-    outFile: values.out ? path.resolve(values.out) : path.join(__dirname, '../data/ver6-optimized.json')
-  }).then(({ options, result, feasible, evaluations, restarts, outFile }) => {
-    console.log(`\ndone: ${evaluations} evaluations, ${restarts} restarts`)
-    console.log(feasible ? 'best feasible result:' : 'no feasible result found, closest one:', result)
-
-    console.log('\nchanged options (default -> optimized):')
-    for (const key of Object.keys(SPACE)) {
-      const before = (DEFAULT_OPTIONS as Params)[key]
-      if (before !== options[key])
-        console.log(`  ${key}: ${before} -> ${options[key]}`)
-    }
-
-    console.log(`\nfull options saved to ${outFile}`)
-  }).catch(error => {
-    console.error(error)
-    process.exit(1)
-  })
+  return { options, result: best.result, feasible: best.violation === 0, evaluations, restarts, best }
 }
